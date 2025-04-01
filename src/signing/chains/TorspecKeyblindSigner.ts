@@ -5,156 +5,149 @@ import { SignatureConfig, SIG_CONFIG } from "../../constants";
 export default class TorspecKeyblindSigner implements Signer {
   readonly ownerLength: number = SIG_CONFIG[SignatureConfig.ED25519].pubLength;
   readonly signatureLength: number = SIG_CONFIG[SignatureConfig.ED25519].sigLength;
-  readonly signatureType: number = 2
+  readonly signatureType: number = 2;
 
   public get publicKey(): Buffer {
-    return this._publicKey
+    return this._publicKey;
   }
 
-  constructor(
-    protected signing_key: Buffer,
-    private readonly _publicKey: Buffer
-  ) {}
+  constructor(protected signingKey: Buffer, private readonly _publicKey: Buffer) {}
 
   /**
    * Signs a message using the Signer's "extended" ed25519 key
-   * 
+   *
    * Modified from @stablelib/ed25519 from tweetnacl-js
    */
   async sign(message: Uint8Array): Promise<Uint8Array> {
     // NB: changed variable from "x" to "S"
-    const S = new Float64Array(64)
-    
-    // NB: changed variable from "p" to "R"
-    const R = [gf(), gf(), gf(), gf()]
-    
-    // NB: secret key is already "extended" form, changed name from "d" to "a"
-    const a = this.signing_key
+    const S = new Float64Array(64);
 
-    const signature = new Uint8Array(64)
-    signature.set(a.subarray(32), 32)
+    // NB: changed variable from "p" to "R"
+    const R = [gf(), gf(), gf(), gf()];
+
+    // NB: secret key is already "extended" form, changed name from "d" to "a"
+    const a = this.signingKey;
+
+    const signature = new Uint8Array(64);
+    signature.set(a.subarray(32), 32);
 
     /* r = H(aExt[32..64], m) */
-    const H1 = createHash('sha512')
-    H1.update(this.signing_key.subarray(32))
-    H1.update(message)
-    const r = H1.digest()
-    reduce(r)
+    const H1 = createHash("sha512");
+    H1.update(this.signingKey.subarray(32));
+    H1.update(message);
+    const r = H1.digest();
+    reduce(r);
 
     /* R = rB */
-    scalarbase(R, r)
-    pack(signature, R)
+    scalarbase(R, r);
+    pack(signature, R);
 
-    const H2 = createHash('sha512')
+    const H2 = createHash("sha512");
 
     /**
      * (normal) S = H(R,A,m)..
      *
      *  becomes
-     * 
+     *
      * (blind)  S = hash(R,A',M)
      */
-    H2.update(signature.subarray(0, 32))
-    const blindPublicKey = torspecKeyblindPublicKeyFromExpandedKey(a)
-    H2.update(blindPublicKey)
-    H2.update(message)
-    const h = H2.digest()
-    reduce(h)
+    H2.update(signature.subarray(0, 32));
+    const blindPublicKey = torspecKeyblindPublicKeyFromExpandedKey(a);
+    H2.update(blindPublicKey);
+    H2.update(message);
+    const h = H2.digest();
+    reduce(h);
 
     /**
      * (normal) S = H(R,A,m)a
      * (normal) S = (r + H(R,A,m)a)
-     *  
+     *
      *  becomes
-     * 
+     *
      * (blind)  S = hash(R,A',M)ah
      * (blind)  S = r+hash(R,A',M)ah
      */
     for (let i = 0; i < 32; i++) {
-        S[i] = r[i]
+      S[i] = r[i];
     }
     for (let i = 0; i < 32; i++) {
-        for (let j = 0; j < 32; j++) {
-            S[i + j] += h[i] * a[j]
-        }
+      for (let j = 0; j < 32; j++) {
+        S[i + j] += h[i] * a[j];
+      }
     }
 
-    /**  
+    /**
      * (normal) S = (r + H(R,A,m)a) mod L
-     * 
+     *
      *  becomes
-     * 
+     *
      * (blind)  S = r+hash(R,A',M)ah mod l
      */
-    modL(signature.subarray(32), S)
+    modL(signature.subarray(32), S);
 
-    return signature
+    return signature;
   }
 
-  static async verify(
-    pk: string | Buffer,
-    message: Uint8Array,
-    signature: Uint8Array
-  ): Promise<boolean> {
-    const publicKey = Buffer.from(pk)
-    const t = new Uint8Array(32)
-    const p = [gf(), gf(), gf(), gf()]
-    const q = [gf(), gf(), gf(), gf()]
-  
+  static async verify(pk: string | Buffer, message: Uint8Array, signature: Uint8Array): Promise<boolean> {
+    const publicKey = Buffer.from(pk);
+    const t = new Uint8Array(32);
+    const p = [gf(), gf(), gf(), gf()];
+    const q = [gf(), gf(), gf(), gf()];
+
     if (signature.length !== SIG_CONFIG[SignatureConfig.ED25519].sigLength) {
-      throw new Error(`ed25519: signature must be ${SIG_CONFIG[SignatureConfig.ED25519].sigLength} bytes`)
+      throw new Error(`ed25519: signature must be ${SIG_CONFIG[SignatureConfig.ED25519].sigLength} bytes`);
     }
-  
+
     if (unpackneg(q, publicKey)) {
-      return false
+      return false;
     }
-  
-    const hs = createHash('sha512')
-    hs.update(signature.subarray(0, 32))
-    hs.update(publicKey)
-    hs.update(message)
-    const h = hs.digest()
-    reduce(h)
-    scalarmult(p, q, h)
-  
-    scalarbase(q, signature.subarray(32))
-    edadd(p, q)
-    pack(t, p)
-  
+
+    const hs = createHash("sha512");
+    hs.update(signature.subarray(0, 32));
+    hs.update(publicKey);
+    hs.update(message);
+    const h = hs.digest();
+    reduce(h);
+    scalarmult(p, q, h);
+
+    scalarbase(q, signature.subarray(32));
+    edadd(p, q);
+    pack(t, p);
+
     if (verify32(signature, t)) {
-      return false
+      return false;
     }
-    return true
+    return true;
   }
 }
 
 /**
  * Computes a "blind" public key used in tor rendevous spec
- * 
+ *
  *  public key for the period:
  *      A' = h A = (ha)B
- * 
+ *
  * @param aExt Extended secret key, (ha)B
  */
-export function torspecKeyblindPublicKeyFromExpandedKey(aExt: Uint8Array) {
-  const publicKey = new Uint8Array(32)
-  const p = [gf(), gf(), gf(), gf()]
+export function torspecKeyblindPublicKeyFromExpandedKey(aExt: Uint8Array): Uint8Array<ArrayBuffer> {
+  const publicKey = new Uint8Array(32);
+  const p = [gf(), gf(), gf(), gf()];
 
   /* (ha)B */
-  scalarbase(p, aExt)
-  pack(publicKey, p)
+  scalarbase(p, aExt);
+  pack(publicKey, p);
 
-  return publicKey
+  return publicKey;
 }
 
-export function expandTorspecKeyblindPrivateKey(secretKey: Uint8Array) {
-  const hash = createHash('sha512')
-  const aExt = hash.update(secretKey.slice(0, 32)).digest()
-  aExt[0] &= 248
-  aExt[31] &= 127
-  aExt[31] |= 64
+export function expandTorspecKeyblindPrivateKey(secretKey: Uint8Array): Buffer {
+  const hash = createHash("sha512");
+  const aExt = hash.update(secretKey.slice(0, 32)).digest();
+  aExt[0] &= 248;
+  aExt[31] &= 127;
+  aExt[31] |= 64;
 
-  return Buffer.from(aExt)
+  return Buffer.from(aExt);
 }
 
 /**
@@ -170,85 +163,71 @@ type GF = Float64Array;
 // We use Float64Array, because we need 48-bit numbers
 // for this implementation.
 function gf(init?: number[]): GF {
-    const r = new Float64Array(16);
-    if (init) {
-        for (let i = 0; i < init.length; i++) {
-            r[i] = init[i];
-        }
+  const r = new Float64Array(16);
+  if (init) {
+    for (let i = 0; i < init.length; i++) {
+      r[i] = init[i];
     }
-    return r;
+  }
+  return r;
 }
 
 const L = new Float64Array([
-  0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2,
-  0xde, 0xf9, 0xde, 0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10
-])
-const D = gf([
-  0x78a3, 0x1359, 0x4dca, 0x75eb, 0xd8ab, 0x4141, 0x0a4d, 0x0070,
-  0xe898, 0x7779, 0x4079, 0x8cc7, 0xfe73, 0x2b6f, 0x6cee, 0x5203
-])
-const D2 = gf([
-  0xf159, 0x26b2, 0x9b94, 0xebd6, 0xb156, 0x8283, 0x149a, 0x00e0,
-  0xd130, 0xeef3, 0x80f2, 0x198e, 0xfce7, 0x56df, 0xd9dc, 0x2406
-])
-const X = gf([
-  0xd51a, 0x8f25, 0x2d60, 0xc956, 0xa7b2, 0x9525, 0xc760, 0x692c,
-  0xdc5c, 0xfdd6, 0xe231, 0xc0a4, 0x53fe, 0xcd6e, 0x36d3, 0x2169
-])
-const Y = gf([
-  0x6658, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666,
-  0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666
-])
-const I = gf([
-  0xa0b0, 0x4a0e, 0x1b27, 0xc4ee, 0xe478, 0xad2f, 0x1806, 0x2f43,
-  0xd7a7, 0x3dfb, 0x0099, 0x2b4d, 0xdf0b, 0x4fc1, 0x2480, 0x2b83
-])
-const gf0 = gf()
-const gf1 = gf([1])
+  0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+]);
+const D = gf([0x78a3, 0x1359, 0x4dca, 0x75eb, 0xd8ab, 0x4141, 0x0a4d, 0x0070, 0xe898, 0x7779, 0x4079, 0x8cc7, 0xfe73, 0x2b6f, 0x6cee, 0x5203]);
+const D2 = gf([0xf159, 0x26b2, 0x9b94, 0xebd6, 0xb156, 0x8283, 0x149a, 0x00e0, 0xd130, 0xeef3, 0x80f2, 0x198e, 0xfce7, 0x56df, 0xd9dc, 0x2406]);
+const X = gf([0xd51a, 0x8f25, 0x2d60, 0xc956, 0xa7b2, 0x9525, 0xc760, 0x692c, 0xdc5c, 0xfdd6, 0xe231, 0xc0a4, 0x53fe, 0xcd6e, 0x36d3, 0x2169]);
+const Y = gf([0x6658, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666]);
+const I = gf([0xa0b0, 0x4a0e, 0x1b27, 0xc4ee, 0xe478, 0xad2f, 0x1806, 0x2f43, 0xd7a7, 0x3dfb, 0x0099, 0x2b4d, 0xdf0b, 0x4fc1, 0x2480, 0x2b83]);
+const gf0 = gf();
+const gf1 = gf([1]);
 
-function modL(r: Uint8Array, x: Float64Array) {
+function modL(r: Uint8Array, x: Float64Array): void {
   let carry: number;
   let i: number;
   let j: number;
   let k: number;
   for (i = 63; i >= 32; --i) {
-      carry = 0;
-      for (j = i - 32, k = i - 12; j < k; ++j) {
-          x[j] += carry - 16 * x[i] * L[j - (i - 32)];
-          carry = Math.floor((x[j] + 128) / 256);
-          x[j] -= carry * 256;
-      }
-      x[j] += carry;
-      x[i] = 0;
+    carry = 0;
+    for (j = i - 32, k = i - 12; j < k; ++j) {
+      x[j] += carry - 16 * x[i] * L[j - (i - 32)];
+      carry = Math.floor((x[j] + 128) / 256);
+      x[j] -= carry * 256;
+    }
+    x[j] += carry;
+    x[i] = 0;
   }
   carry = 0;
   for (j = 0; j < 32; j++) {
-      x[j] += carry - (x[31] >> 4) * L[j];
-      carry = x[j] >> 8;
-      x[j] &= 255;
+    x[j] += carry - (x[31] >> 4) * L[j];
+    carry = x[j] >> 8;
+    x[j] &= 255;
   }
   for (j = 0; j < 32; j++) {
-      x[j] -= carry * L[j];
+    x[j] -= carry * L[j];
   }
   for (i = 0; i < 32; i++) {
-      x[i + 1] += x[i] >> 8;
-      r[i] = x[i] & 255;
+    x[i + 1] += x[i] >> 8;
+    r[i] = x[i] & 255;
   }
 }
 
-function reduce(r: Uint8Array) {
+function reduce(r: Uint8Array): void {
   const x = new Float64Array(64);
   for (let i = 0; i < 64; i++) {
-      x[i] = r[i];
+    x[i] = r[i];
   }
   for (let i = 0; i < 64; i++) {
-      r[i] = 0;
+    r[i] = 0;
   }
   modL(r, x);
 }
 
-function pack(r: Uint8Array, p: GF[]) {
-  const tx = gf(), ty = gf(), zi = gf();
+function pack(r: Uint8Array, p: GF[]): void {
+  const tx = gf(),
+    ty = gf(),
+    zi = gf();
   inv25519(zi, p[2]);
   mul(tx, p[0], zi);
   mul(ty, p[1], zi);
@@ -256,67 +235,95 @@ function pack(r: Uint8Array, p: GF[]) {
   r[31] ^= par25519(tx) << 7;
 }
 
-function par25519(a: GF) {
+function par25519(a: GF): number {
   const d = new Uint8Array(32);
   pack25519(d, a);
   return d[0] & 1;
 }
 
-function inv25519(o: GF, i: GF) {
+function inv25519(o: GF, i: GF): void {
   const c = gf();
   let a: number;
   for (a = 0; a < 16; a++) {
-      c[a] = i[a];
+    c[a] = i[a];
   }
   for (a = 253; a >= 0; a--) {
-      square(c, c);
-      if (a !== 2 && a !== 4) {
-          mul(c, c, i);
-      }
+    square(c, c);
+    if (a !== 2 && a !== 4) {
+      mul(c, c, i);
+    }
   }
   for (a = 0; a < 16; a++) {
-      o[a] = c[a];
+    o[a] = c[a];
   }
 }
 
-function square(o: GF, a: GF) {
+function square(o: GF, a: GF): void {
   mul(o, a, a);
 }
 
-function add(o: GF, a: GF, b: GF) {
+function add(o: GF, a: GF, b: GF): void {
   for (let i = 0; i < 16; i++) {
-      o[i] = a[i] + b[i];
+    o[i] = a[i] + b[i];
   }
 }
 
-function sub(o: GF, a: GF, b: GF) {
+function sub(o: GF, a: GF, b: GF): void {
   for (let i = 0; i < 16; i++) {
-      o[i] = a[i] - b[i];
+    o[i] = a[i] - b[i];
   }
 }
 
-function mul(o: GF, a: GF, b: GF) {
-  let v: number, c: number,
-      t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0,
-      t8 = 0, t9 = 0, t10 = 0, t11 = 0, t12 = 0, t13 = 0, t14 = 0, t15 = 0,
-      t16 = 0, t17 = 0, t18 = 0, t19 = 0, t20 = 0, t21 = 0, t22 = 0, t23 = 0,
-      t24 = 0, t25 = 0, t26 = 0, t27 = 0, t28 = 0, t29 = 0, t30 = 0,
-      b0 = b[0],
-      b1 = b[1],
-      b2 = b[2],
-      b3 = b[3],
-      b4 = b[4],
-      b5 = b[5],
-      b6 = b[6],
-      b7 = b[7],
-      b8 = b[8],
-      b9 = b[9],
-      b10 = b[10],
-      b11 = b[11],
-      b12 = b[12],
-      b13 = b[13],
-      b14 = b[14],
-      b15 = b[15];
+function mul(o: GF, a: GF, b: GF): void {
+  let v: number,
+    c: number,
+    t0 = 0,
+    t1 = 0,
+    t2 = 0,
+    t3 = 0,
+    t4 = 0,
+    t5 = 0,
+    t6 = 0,
+    t7 = 0,
+    t8 = 0,
+    t9 = 0,
+    t10 = 0,
+    t11 = 0,
+    t12 = 0,
+    t13 = 0,
+    t14 = 0,
+    t15 = 0,
+    t16 = 0,
+    t17 = 0,
+    t18 = 0,
+    t19 = 0,
+    t20 = 0,
+    t21 = 0,
+    t22 = 0,
+    t23 = 0,
+    t24 = 0,
+    t25 = 0,
+    t26 = 0,
+    t27 = 0,
+    t28 = 0,
+    t29 = 0,
+    t30 = 0;
+  const b0 = b[0],
+    b1 = b[1],
+    b2 = b[2],
+    b3 = b[3],
+    b4 = b[4],
+    b5 = b[5],
+    b6 = b[6],
+    b7 = b[7],
+    b8 = b[8],
+    b9 = b[9],
+    b10 = b[10],
+    b11 = b[11],
+    b12 = b[12],
+    b13 = b[13],
+    b14 = b[14],
+    b15 = b[15];
 
   v = a[0];
   t0 += v * b0;
@@ -610,42 +617,106 @@ function mul(o: GF, a: GF, b: GF) {
 
   // first car
   c = 1;
-  v = t0 + c + 65535; c = Math.floor(v / 65536); t0 = v - c * 65536;
-  v = t1 + c + 65535; c = Math.floor(v / 65536); t1 = v - c * 65536;
-  v = t2 + c + 65535; c = Math.floor(v / 65536); t2 = v - c * 65536;
-  v = t3 + c + 65535; c = Math.floor(v / 65536); t3 = v - c * 65536;
-  v = t4 + c + 65535; c = Math.floor(v / 65536); t4 = v - c * 65536;
-  v = t5 + c + 65535; c = Math.floor(v / 65536); t5 = v - c * 65536;
-  v = t6 + c + 65535; c = Math.floor(v / 65536); t6 = v - c * 65536;
-  v = t7 + c + 65535; c = Math.floor(v / 65536); t7 = v - c * 65536;
-  v = t8 + c + 65535; c = Math.floor(v / 65536); t8 = v - c * 65536;
-  v = t9 + c + 65535; c = Math.floor(v / 65536); t9 = v - c * 65536;
-  v = t10 + c + 65535; c = Math.floor(v / 65536); t10 = v - c * 65536;
-  v = t11 + c + 65535; c = Math.floor(v / 65536); t11 = v - c * 65536;
-  v = t12 + c + 65535; c = Math.floor(v / 65536); t12 = v - c * 65536;
-  v = t13 + c + 65535; c = Math.floor(v / 65536); t13 = v - c * 65536;
-  v = t14 + c + 65535; c = Math.floor(v / 65536); t14 = v - c * 65536;
-  v = t15 + c + 65535; c = Math.floor(v / 65536); t15 = v - c * 65536;
+  v = t0 + c + 65535;
+  c = Math.floor(v / 65536);
+  t0 = v - c * 65536;
+  v = t1 + c + 65535;
+  c = Math.floor(v / 65536);
+  t1 = v - c * 65536;
+  v = t2 + c + 65535;
+  c = Math.floor(v / 65536);
+  t2 = v - c * 65536;
+  v = t3 + c + 65535;
+  c = Math.floor(v / 65536);
+  t3 = v - c * 65536;
+  v = t4 + c + 65535;
+  c = Math.floor(v / 65536);
+  t4 = v - c * 65536;
+  v = t5 + c + 65535;
+  c = Math.floor(v / 65536);
+  t5 = v - c * 65536;
+  v = t6 + c + 65535;
+  c = Math.floor(v / 65536);
+  t6 = v - c * 65536;
+  v = t7 + c + 65535;
+  c = Math.floor(v / 65536);
+  t7 = v - c * 65536;
+  v = t8 + c + 65535;
+  c = Math.floor(v / 65536);
+  t8 = v - c * 65536;
+  v = t9 + c + 65535;
+  c = Math.floor(v / 65536);
+  t9 = v - c * 65536;
+  v = t10 + c + 65535;
+  c = Math.floor(v / 65536);
+  t10 = v - c * 65536;
+  v = t11 + c + 65535;
+  c = Math.floor(v / 65536);
+  t11 = v - c * 65536;
+  v = t12 + c + 65535;
+  c = Math.floor(v / 65536);
+  t12 = v - c * 65536;
+  v = t13 + c + 65535;
+  c = Math.floor(v / 65536);
+  t13 = v - c * 65536;
+  v = t14 + c + 65535;
+  c = Math.floor(v / 65536);
+  t14 = v - c * 65536;
+  v = t15 + c + 65535;
+  c = Math.floor(v / 65536);
+  t15 = v - c * 65536;
   t0 += c - 1 + 37 * (c - 1);
 
   // second car
   c = 1;
-  v = t0 + c + 65535; c = Math.floor(v / 65536); t0 = v - c * 65536;
-  v = t1 + c + 65535; c = Math.floor(v / 65536); t1 = v - c * 65536;
-  v = t2 + c + 65535; c = Math.floor(v / 65536); t2 = v - c * 65536;
-  v = t3 + c + 65535; c = Math.floor(v / 65536); t3 = v - c * 65536;
-  v = t4 + c + 65535; c = Math.floor(v / 65536); t4 = v - c * 65536;
-  v = t5 + c + 65535; c = Math.floor(v / 65536); t5 = v - c * 65536;
-  v = t6 + c + 65535; c = Math.floor(v / 65536); t6 = v - c * 65536;
-  v = t7 + c + 65535; c = Math.floor(v / 65536); t7 = v - c * 65536;
-  v = t8 + c + 65535; c = Math.floor(v / 65536); t8 = v - c * 65536;
-  v = t9 + c + 65535; c = Math.floor(v / 65536); t9 = v - c * 65536;
-  v = t10 + c + 65535; c = Math.floor(v / 65536); t10 = v - c * 65536;
-  v = t11 + c + 65535; c = Math.floor(v / 65536); t11 = v - c * 65536;
-  v = t12 + c + 65535; c = Math.floor(v / 65536); t12 = v - c * 65536;
-  v = t13 + c + 65535; c = Math.floor(v / 65536); t13 = v - c * 65536;
-  v = t14 + c + 65535; c = Math.floor(v / 65536); t14 = v - c * 65536;
-  v = t15 + c + 65535; c = Math.floor(v / 65536); t15 = v - c * 65536;
+  v = t0 + c + 65535;
+  c = Math.floor(v / 65536);
+  t0 = v - c * 65536;
+  v = t1 + c + 65535;
+  c = Math.floor(v / 65536);
+  t1 = v - c * 65536;
+  v = t2 + c + 65535;
+  c = Math.floor(v / 65536);
+  t2 = v - c * 65536;
+  v = t3 + c + 65535;
+  c = Math.floor(v / 65536);
+  t3 = v - c * 65536;
+  v = t4 + c + 65535;
+  c = Math.floor(v / 65536);
+  t4 = v - c * 65536;
+  v = t5 + c + 65535;
+  c = Math.floor(v / 65536);
+  t5 = v - c * 65536;
+  v = t6 + c + 65535;
+  c = Math.floor(v / 65536);
+  t6 = v - c * 65536;
+  v = t7 + c + 65535;
+  c = Math.floor(v / 65536);
+  t7 = v - c * 65536;
+  v = t8 + c + 65535;
+  c = Math.floor(v / 65536);
+  t8 = v - c * 65536;
+  v = t9 + c + 65535;
+  c = Math.floor(v / 65536);
+  t9 = v - c * 65536;
+  v = t10 + c + 65535;
+  c = Math.floor(v / 65536);
+  t10 = v - c * 65536;
+  v = t11 + c + 65535;
+  c = Math.floor(v / 65536);
+  t11 = v - c * 65536;
+  v = t12 + c + 65535;
+  c = Math.floor(v / 65536);
+  t12 = v - c * 65536;
+  v = t13 + c + 65535;
+  c = Math.floor(v / 65536);
+  t13 = v - c * 65536;
+  v = t14 + c + 65535;
+  c = Math.floor(v / 65536);
+  t14 = v - c * 65536;
+  v = t15 + c + 65535;
+  c = Math.floor(v / 65536);
+  t15 = v - c * 65536;
   t0 += c - 1 + 37 * (c - 1);
 
   o[0] = t0;
@@ -666,58 +737,58 @@ function mul(o: GF, a: GF, b: GF) {
   o[15] = t15;
 }
 
-function pack25519(o: Uint8Array, n: GF) {
+function pack25519(o: Uint8Array, n: GF): void {
   const m = gf();
   const t = gf();
   for (let i = 0; i < 16; i++) {
-      t[i] = n[i];
+    t[i] = n[i];
   }
   car25519(t);
   car25519(t);
   car25519(t);
   for (let j = 0; j < 2; j++) {
-      m[0] = t[0] - 0xffed;
-      for (let i = 1; i < 15; i++) {
-          m[i] = t[i] - 0xffff - ((m[i - 1] >> 16) & 1);
-          m[i - 1] &= 0xffff;
-      }
-      m[15] = t[15] - 0x7fff - ((m[14] >> 16) & 1);
-      const b = (m[15] >> 16) & 1;
-      m[14] &= 0xffff;
-      sel25519(t, m, 1 - b);
+    m[0] = t[0] - 0xffed;
+    for (let i = 1; i < 15; i++) {
+      m[i] = t[i] - 0xffff - ((m[i - 1] >> 16) & 1);
+      m[i - 1] &= 0xffff;
+    }
+    m[15] = t[15] - 0x7fff - ((m[14] >> 16) & 1);
+    const b = (m[15] >> 16) & 1;
+    m[14] &= 0xffff;
+    sel25519(t, m, 1 - b);
   }
   for (let i = 0; i < 16; i++) {
-      o[2 * i] = t[i] & 0xff;
-      o[2 * i + 1] = t[i] >> 8;
+    o[2 * i] = t[i] & 0xff;
+    o[2 * i + 1] = t[i] >> 8;
   }
 }
 
-function car25519(o: GF) {
+function car25519(o: GF): void {
   let c = 1;
   for (let i = 0; i < 16; i++) {
-      let v = o[i] + c + 65535;
-      c = Math.floor(v / 65536);
-      o[i] = v - c * 65536;
+    const v = o[i] + c + 65535;
+    c = Math.floor(v / 65536);
+    o[i] = v - c * 65536;
   }
   o[0] += c - 1 + 37 * (c - 1);
 }
 
-function sel25519(p: GF, q: GF, b: number) {
+function sel25519(p: GF, q: GF, b: number): void {
   const c = ~(b - 1);
   for (let i = 0; i < 16; i++) {
-      const t = c & (p[i] ^ q[i]);
-      p[i] ^= t;
-      q[i] ^= t;
+    const t = c & (p[i] ^ q[i]);
+    p[i] ^= t;
+    q[i] ^= t;
   }
 }
 
-function set25519(r: GF, a: GF) {
+function set25519(r: GF, a: GF): void {
   for (let i = 0; i < 16; i++) {
-      r[i] = a[i] | 0;
+    r[i] = a[i] | 0;
   }
 }
 
-function scalarbase(p: GF[], s: Uint8Array) {
+function scalarbase(p: GF[], s: Uint8Array): void {
   const q = [gf(), gf(), gf(), gf()];
   set25519(q[0], X);
   set25519(q[1], Y);
@@ -726,30 +797,36 @@ function scalarbase(p: GF[], s: Uint8Array) {
   scalarmult(p, q, s);
 }
 
-function scalarmult(p: GF[], q: GF[], s: Uint8Array) {
+function scalarmult(p: GF[], q: GF[], s: Uint8Array): void {
   set25519(p[0], gf0);
   set25519(p[1], gf1);
   set25519(p[2], gf1);
   set25519(p[3], gf0);
   for (let i = 255; i >= 0; --i) {
-      const b = (s[(i / 8) | 0] >> (i & 7)) & 1;
-      cswap(p, q, b);
-      edadd(q, p);
-      edadd(p, p);
-      cswap(p, q, b);
+    const b = (s[(i / 8) | 0] >> (i & 7)) & 1;
+    cswap(p, q, b);
+    edadd(q, p);
+    edadd(p, p);
+    cswap(p, q, b);
   }
 }
 
-function cswap(p: GF[], q: GF[], b: number) {
+function cswap(p: GF[], q: GF[], b: number): void {
   for (let i = 0; i < 4; i++) {
-      sel25519(p[i], q[i], b);
+    sel25519(p[i], q[i], b);
   }
 }
 
-function edadd(p: GF[], q: GF[]) {
-  const a = gf(), b = gf(), c = gf(),
-      d = gf(), e = gf(), f = gf(),
-      g = gf(), h = gf(), t = gf();
+function edadd(p: GF[], q: GF[]): void {
+  const a = gf(),
+    b = gf(),
+    c = gf(),
+    d = gf(),
+    e = gf(),
+    f = gf(),
+    g = gf(),
+    h = gf(),
+    t = gf();
 
   sub(a, p[1], p[0]);
   sub(t, q[1], q[0]);
@@ -772,32 +849,32 @@ function edadd(p: GF[], q: GF[]) {
   mul(p[3], e, h);
 }
 
-function pow2523(o: GF, i: GF) {
+function pow2523(o: GF, i: GF): void {
   const c = gf();
   let a: number;
   for (a = 0; a < 16; a++) {
-      c[a] = i[a];
+    c[a] = i[a];
   }
   for (a = 250; a >= 0; a--) {
-      square(c, c);
-      if (a !== 1) {
-          mul(c, c, i);
-      }
+    square(c, c);
+    if (a !== 1) {
+      mul(c, c, i);
+    }
   }
   for (a = 0; a < 16; a++) {
-      o[a] = c[a];
+    o[a] = c[a];
   }
 }
 
-function verify32(x: Uint8Array, y: Uint8Array) {
+function verify32(x: Uint8Array, y: Uint8Array): number {
   let d = 0;
   for (let i = 0; i < 32; i++) {
-      d |= x[i] ^ y[i];
+    d |= x[i] ^ y[i];
   }
   return (1 & ((d - 1) >>> 8)) - 1;
 }
 
-function neq25519(a: GF, b: GF) {
+function neq25519(a: GF, b: GF): number {
   const c = new Uint8Array(32);
   const d = new Uint8Array(32);
   pack25519(c, a);
@@ -805,10 +882,14 @@ function neq25519(a: GF, b: GF) {
   return verify32(c, d);
 }
 
-function unpackneg(r: GF[], p: Uint8Array) {
-  const t = gf(), chk = gf(), num = gf(),
-      den = gf(), den2 = gf(), den4 = gf(),
-      den6 = gf();
+function unpackneg(r: GF[], p: Uint8Array): 0 | -1 {
+  const t = gf(),
+    chk = gf(),
+    num = gf(),
+    den = gf(),
+    den2 = gf(),
+    den4 = gf(),
+    den6 = gf();
 
   set25519(r[2], gf1);
   unpack25519(r[1], p);
@@ -832,26 +913,26 @@ function unpackneg(r: GF[], p: Uint8Array) {
   square(chk, r[0]);
   mul(chk, chk, den);
   if (neq25519(chk, num)) {
-      mul(r[0], r[0], I);
+    mul(r[0], r[0], I);
   }
 
   square(chk, r[0]);
   mul(chk, chk, den);
   if (neq25519(chk, num)) {
-      return -1;
+    return -1;
   }
 
-  if (par25519(r[0]) === (p[31] >> 7)) {
-      sub(r[0], gf0, r[0]);
+  if (par25519(r[0]) === p[31] >> 7) {
+    sub(r[0], gf0, r[0]);
   }
 
   mul(r[3], r[0], r[1]);
   return 0;
 }
 
-function unpack25519(o: GF, n: Uint8Array) {
+function unpack25519(o: GF, n: Uint8Array): void {
   for (let i = 0; i < 16; i++) {
-      o[i] = n[2 * i] + (n[2 * i + 1] << 8);
+    o[i] = n[2 * i] + (n[2 * i + 1] << 8);
   }
   o[15] &= 0x7fff;
 }
