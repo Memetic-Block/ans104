@@ -1,14 +1,14 @@
 {
-  "name": "@ar.io/arbundles",
+  "name": "@memetic-block/hank-hills-ass",
   "version": "1.0.1",
   "description": "Arweave bundling library",
   "author": {
-    "name": "Permanent Data Solutions Inc",
-    "email": "info@ar.io",
-    "website": "https://ar.io"
+    "name": "Memetic Block",
+    "email": "info@memeticblock.com",
+    "website": "https://memeticblock.com"
   },
   "license": "Apache-2.0",
-  "repository": "https://github.com/ar-io/arbundles",
+  "repository": "https://github.com/memetic-block/hank-hills-ass",
   "main": "build/node/cjs/index.js",
   "module": "build/node/esm/index.js",
   "browser": "build/web/esm/webIndex.js",
