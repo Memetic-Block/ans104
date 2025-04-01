@@ -129,7 +129,7 @@ export default class TorspecKeyblindSigner implements Signer {
  *
  * @param aExt Extended secret key, (ha)B
  */
-export function torspecKeyblindPublicKeyFromExpandedKey(aExt: Uint8Array): Uint8Array<ArrayBuffer> {
+export function torspecKeyblindPublicKeyFromExpandedKey(aExt: Uint8Array): Uint8Array {
   const publicKey = new Uint8Array(32);
   const p = [gf(), gf(), gf(), gf()];
 
