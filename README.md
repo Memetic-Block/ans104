@@ -26,7 +26,7 @@ yarn add @memetic-block/hank-hills-ass
 
 ### Quick Example
 ```ts
-import { bundleAndSignData, createData } from "@ar.io/arbundles";
+import { bundleAndSignData, createData } from "@memetic-block/hank-hills-ass";
 
 const dataItems = [createData("some data"), createData("some other data")];
 
